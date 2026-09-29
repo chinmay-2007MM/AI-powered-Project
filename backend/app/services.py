@@ -4,6 +4,7 @@ from redis import Redis
 from sqlalchemy.orm import Session
 from .config import settings
 from .models import Event, Incident, AuditLog, Camera, Zone
+from datetime import timedelta
 
 
 def publish(channel: str, payload: dict) -> None:
@@ -28,6 +29,31 @@ def create_event(db: Session, data: dict) -> tuple[Event, Incident, bool]:
     if existing:
         incident = db.query(Incident).filter_by(event_id=existing.id).first()
         return existing, incident, False
+    # Coalesce bursts with the same explainable scene fingerprint. Keep the
+    # original event/incident and retain aggregate counts in its payload.
+    object_ids = set(data.get("object_ids") or [])
+    if object_ids:
+        floor = data["timestamp"] - timedelta(seconds=settings.event_correlation_window_seconds)
+        recent = db.query(Event).filter(
+            Event.camera_id == data["camera_id"],
+            Event.event_type == data["event_type"],
+            Event.severity == data["severity"],
+            Event.zone_id == data.get("zone_id"),
+            Event.timestamp >= floor,
+            Event.timestamp <= data["timestamp"],
+        ).order_by(Event.timestamp.desc()).limit(settings.event_correlation_max_candidates).all()
+        for prior in recent:
+            if not object_ids.intersection(prior.object_ids or []) or set(prior.reason_codes or []) != set(data.get("reason_codes") or []):
+                continue
+            prior.payload = {**(prior.payload or {}), "correlation_count": int((prior.payload or {}).get("correlation_count", 1)) + 1,
+                             "last_correlated_at": data["timestamp"].isoformat(),
+                             "correlated_reason_codes": sorted(set((prior.payload or {}).get("correlated_reason_codes", prior.reason_codes or [])) | set(data.get("reason_codes") or []))}
+            db.add(AuditLog(id=str(uuid4()), actor="ai-pipeline", action="event.correlated", entity="event", entity_id=prior.id,
+                            metadata_json={"window_seconds": settings.event_correlation_window_seconds, "source": data.get("source"), "reason_codes": data.get("reason_codes", [])}))
+            db.commit(); db.refresh(prior)
+            incident = db.query(Incident).filter_by(event_id=prior.id).first()
+            publish("events", {"event_id": prior.id, "correlated": True, "correlation_count": prior.payload["correlation_count"]})
+            return prior, incident, False
     camera = ensure_camera(db, data["camera_id"])
     if data.get("zone_id"):
         zone = db.get(Zone, data["zone_id"])

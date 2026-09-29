@@ -37,6 +37,9 @@ class Camera(Base):
     fps: Mapped[float | None] = mapped_column(Float)
     status: Mapped[str] = mapped_column(String(32), default="unconfigured")
     calibration_ref: Mapped[str | None] = mapped_column(String(500))
+    calibration: Mapped[dict | None] = mapped_column(JSON)
+    floorplan_x: Mapped[float | None] = mapped_column(Float)
+    floorplan_y: Mapped[float | None] = mapped_column(Float)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
 
 
@@ -61,6 +64,29 @@ class TrackedObject(Base):
     first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     embedding_ref: Mapped[str | None] = mapped_column(String(500))
+
+
+class GlobalTrack(Base):
+    """Facility-level identity hypothesis; never overwrites camera-local track IDs."""
+    __tablename__ = "global_tracks"
+    id: Mapped[str] = mapped_column(String(100), primary_key=True)
+    site_id: Mapped[str] = mapped_column(ForeignKey("sites.id", ondelete="CASCADE"), index=True)
+    object_class: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class GlobalTrackMembership(Base):
+    __tablename__ = "global_track_memberships"
+    __table_args__ = (UniqueConstraint("local_track_id", name="uq_global_membership_local_track"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    global_track_id: Mapped[str] = mapped_column(ForeignKey("global_tracks.id", ondelete="CASCADE"), index=True)
+    local_track_id: Mapped[str] = mapped_column(ForeignKey("tracked_objects.id", ondelete="CASCADE"), index=True)
+    camera_id: Mapped[str] = mapped_column(ForeignKey("cameras.id", ondelete="CASCADE"), index=True)
+    matched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False)
+    method: Mapped[str] = mapped_column(String(80), nullable=False)
+    provenance: Mapped[str] = mapped_column(String(80), nullable=False)
 
 
 class ModelVersion(Base):
@@ -98,6 +124,9 @@ class TrackPoint(Base):
     depth_m: Mapped[float | None] = mapped_column(Float)
     speed_mps: Mapped[float | None] = mapped_column(Float)
     direction_deg: Mapped[float | None] = mapped_column(Float)
+    world_x_m: Mapped[float | None] = mapped_column(Float)
+    world_y_m: Mapped[float | None] = mapped_column(Float)
+    world_z_m: Mapped[float | None] = mapped_column(Float)
 
 
 class PPEObservation(Base):

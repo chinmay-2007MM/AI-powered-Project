@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     s3_bucket: str = "evidence"
     jwt_secret: str = "development-only-change-this-secret"
     ai_service_token: str = ""
+    event_correlation_window_seconds: int = 30
+    event_correlation_max_candidates: int = 20
     cors_origins: str = "http://localhost:5173"
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
